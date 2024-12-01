@@ -1,6 +1,5 @@
 import tkinter as tk
 from tkinter import font as tkFont
-from tkinter import font as tkfont
 import websocket
 import json
 import threading
@@ -37,7 +36,7 @@ def create_overlay():
         canvas.create_rectangle(10, 10, 90, 40, fill="red", outline="red", width=2)  # Fallback for older Tk versions
 
     # Use a better font and styling for the text
-    live_font = tkfont.Font(family="Helvetica", size=12, weight="bold")
+    live_font = tkFont.Font(family="Helvetica", size=12, weight="bold")
     canvas.create_text(50, 25, text="LIVE", fill="white", font=live_font)
 
     # Adding a pulsating effect to the "LIVE" text
