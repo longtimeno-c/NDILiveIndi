@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import font as tkFont
+from tkinter import font as tkfont
 import websocket
 import json
 import threading
@@ -8,8 +9,8 @@ import hashlib
 import uuid
 
 # Configuration
-host = "ws://obshostname:obsport"  # Change to the IP and port of the OBS WebSocket server
-password = "obspassword"  # Your OBS WebSocket password
+host = "ws://192.168.2.234:4455"  # Change to the IP and port of the OBS WebSocket server
+password = "H0NL2wrVYRXPefeU"  # Your OBS WebSocket password
 target_scene = None  # This will store the scene selected from the popup
 
 def get_auth_response(password, secret, salt):
@@ -20,13 +21,35 @@ def get_auth_response(password, secret, salt):
 def create_overlay():
     overlay = tk.Tk()
     overlay.title("Live Indicator")
-    overlay.geometry("+{}+{}".format(overlay.winfo_screenwidth() - 150, 500))
+    overlay.geometry("+{}+{}".format(overlay.winfo_screenwidth() - 150, 500))  # Slightly adjusted position for aesthetics
     overlay.attributes("-topmost", True)
     overlay.overrideredirect(True)
-    canvas = tk.Canvas(overlay, width=100, height=50, bg='red')
+    overlay.attributes("-alpha", 0.85)  # Adjust transparency of the window
+
+    # Use a more modern looking canvas with rounded corners
+    canvas = tk.Canvas(overlay, width=100, height=50, bg='red', bd=0, highlightthickness=0)
     canvas.pack()
-    canvas.create_oval(5, 5, 45, 45, fill="red")
-    canvas.create_text(25, 25, text="LIVE", fill="white")
+
+    # Create a rounded rectangle (if your system supports it)
+    try:
+        canvas.create_rectangle(10, 10, 90, 40, fill="red", outline="red", width=2, smooth=True)
+    except:
+        canvas.create_rectangle(10, 10, 90, 40, fill="red", outline="red", width=2)  # Fallback for older Tk versions
+
+    # Use a better font and styling for the text
+    live_font = tkfont.Font(family="Helvetica", size=12, weight="bold")
+    canvas.create_text(50, 25, text="LIVE", fill="white", font=live_font)
+
+    # Adding a pulsating effect to the "LIVE" text
+    def pulsate():
+        current_color = canvas.itemcget(live_text, "fill")
+        new_color = "white" if current_color == "red" else "red"
+        canvas.itemconfig(live_text, fill=new_color)
+        overlay.after(1000, pulsate)  # Change color every second
+
+    live_text = canvas.create_text(50, 25, text="LIVE", fill="white", font=live_font)
+    pulsate()  # Start the pulsating effect
+
     return overlay, canvas
 
 def show_scene_selection(scenes, overlay):
