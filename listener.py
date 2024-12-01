@@ -9,8 +9,8 @@ import hashlib
 import uuid
 
 # Configuration
-host = "ws://192.168.2.234:4455"  # Change to the IP and port of the OBS WebSocket server
-password = "H0NL2wrVYRXPefeU"  # Your OBS WebSocket password
+host = "ws://obshost:obsport"  # Change to the IP and port of the OBS WebSocket server
+password = "obsWSpassword"  # Your OBS WebSocket password
 target_scene = None  # This will store the scene selected from the popup
 
 def get_auth_response(password, secret, salt):
