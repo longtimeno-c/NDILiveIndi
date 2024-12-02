@@ -8,8 +8,8 @@ import hashlib
 import uuid
 
 # Configuration
-host = "ws://192.168.2.234:4455"  # Change to the IP and port of the OBS WebSocket server
-password = "H0NL2wrVYRXPefeU"  # Your OBS WebSocket password
+host = "ws://obshost:obsport"  # Change to the IP and port of the OBS WebSocket server
+password = "obsWSpassword"  # Your OBS WebSocket password
 target_scene = None  # This will store the scene selected from the popup
 
 def get_auth_response(password, secret, salt):
@@ -19,11 +19,11 @@ def get_auth_response(password, secret, salt):
 
 def create_overlay():
     overlay = tk.Tk()
-    overlay.title("Stream150 Manager")
-    overlay.geometry("+{}+{}".format(overlay.winfo_screenwidth() - 150, 50))  # Position close to the top
+    overlay.title("Stream Manager")
+    overlay.geometry("+{}+{}".format(overlay.winfo_screenwidth() - 150, 500))
     overlay.attributes("-topmost", True)
     overlay.overrideredirect(True)
-    overlay.attributes("-alpha", 0.9)  # Slightly more opaque for better visibility
+    overlay.attributes("-alpha", 0.85)
 
     # Scene selection dropdown
     scene_var = tk.StringVar(overlay)
@@ -38,21 +38,14 @@ def create_overlay():
     canvas = tk.Canvas(overlay, width=100, height=50, bg='red', bd=0, highlightthickness=0)
     canvas.pack()
 
-    # Rectangle for the live indicator
-    canvas.create_rectangle(10, 10, 90, 40, fill="red", outline="red", width=2)
+    # Rounded rectangle
+    canvas.create_rectangle(10, 10, 90, 40, fill="red", outline="red", width=2, smooth=True)
 
-    # Text configuration for "LIVE"
-    live_font = tkFont.Font(family="Arial", size=12, weight="bold")
-    live_text = canvas.create_text(50, 25, text="LIVE", fill="white", font=live_font)
+    # Text configuration
+    live_font = tkFont.Font(family="Helvetica", size=12, weight="bold")
+    canvas.create_text(50, 25, text="LIVE", fill="white", font=live_font)
 
-    return overlay, canvas, scene_var, scene_dropdown, live_text
-
-def flash_live_indicator(canvas, live_text, is_flashing):
-    current_color = canvas.itemcget(live_text, "fill")
-    new_color = "white" if current_color == "red" else "red"
-    canvas.itemconfig(live_text, fill=new_color)
-    if is_flashing:
-        canvas.after(500, flash_live_indicator, canvas, live_text, is_flashing)
+    return overlay, canvas, scene_var, scene_dropdown
 
 def toggle_drag(window):
     if window.overrideredirect():
@@ -67,17 +60,13 @@ def set_scene(scene):
     target_scene = scene
     print(f"Scene selected: {scene}")
 
-def update_overlay_visibility(overlay, canvas, live_text, scene_name):
+def update_overlay_visibility(overlay, canvas, scene_name):
     if scene_name == target_scene:
-        overlay.attributes("-topmost", True)  # Only be topmost when the selected scene is active
-        overlay.deiconify()
-        flash_live_indicator(canvas, live_text, True)
+        overlay.deiconify()  # Show the overlay if the selected scene is active
     else:
-        overlay.attributes("-topmost", False)  # No longer topmost, but still open and accessible
-        overlay.iconify()  # Minimize instead of completely hiding
-        flash_live_indicator(canvas, live_text, False)
+        overlay.withdraw()  # Hide the overlay otherwise
 
-def run_websocket(overlay, canvas, scene_var, scene_dropdown, live_text):
+def run_websocket(overlay, canvas, scene_var, scene_dropdown):
     def on_message(ws, message):
         data = json.loads(message)
         print("Message received:", data)
@@ -112,7 +101,7 @@ def run_websocket(overlay, canvas, scene_var, scene_dropdown, live_text):
             overlay.after(0, lambda: update_scene_dropdown(scene_dropdown, scenes))
         elif data['op'] == 5 and data['d']['eventType'] == 'CurrentProgramSceneChanged':
             current_scene = data['d']['eventData']['sceneName']
-            update_overlay_visibility(overlay, canvas, live_text, current_scene)
+            update_overlay_visibility(overlay, canvas, current_scene)
 
     def on_error(ws, error):
         print(f"WebSocket Error: {error}")
@@ -138,6 +127,6 @@ def update_scene_dropdown(scene_dropdown, scenes):
         menu.add_command(label=scene, command=lambda value=scene: scene_dropdown.setvar(scene_dropdown.cget("textvariable"), value))
 
 if __name__ == "__main__":
-    overlay, canvas, scene_var, scene_dropdown, live_text = create_overlay()
-    threading.Thread(target=run_websocket, args=(overlay, canvas, scene_var, scene_dropdown, live_text)).start()
+    overlay, canvas, scene_var, scene_dropdown = create_overlay()
+    threading.Thread(target=run_websocket, args=(overlay, canvas, scene_var, scene_dropdown)).start()
     overlay.mainloop()
