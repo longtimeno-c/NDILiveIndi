@@ -19,82 +19,46 @@ def get_auth_response(password, secret, salt):
 
 def create_overlay():
     overlay = tk.Tk()
-    overlay.title("Live Indicator")
-    overlay.geometry("+{}+{}".format(overlay.winfo_screenwidth() - 150, 500))  # Slightly adjusted position for aesthetics
+    overlay.title("Stream Manager")
+    overlay.geometry("+{}+{}".format(overlay.winfo_screenwidth() - 150, 500))
     overlay.attributes("-topmost", True)
     overlay.overrideredirect(True)
-    overlay.attributes("-alpha", 0.85)  # Adjust transparency of the window
+    overlay.attributes("-alpha", 0.85)
 
-    # Use a more modern looking canvas with rounded corners
+    # Scene selection dropdown
+    scene_var = tk.StringVar(overlay)
+    scene_dropdown = tk.OptionMenu(overlay, scene_var, "")  # Initially empty
+    scene_dropdown.pack(side="top", fill="x", expand=True)
+    scene_var.trace("w", lambda *args: set_scene(scene_var.get()))
+
+    # Button to make the overlay draggable
+    move_btn = tk.Button(overlay, text="Move LIVE Indicator", command=lambda: toggle_drag(overlay))
+    move_btn.pack(side="top", fill="x", expand=True)
+
     canvas = tk.Canvas(overlay, width=100, height=50, bg='red', bd=0, highlightthickness=0)
     canvas.pack()
 
-    # Create a rounded rectangle (if your system supports it)
-    try:
-        canvas.create_rectangle(10, 10, 90, 40, fill="red", outline="red", width=2, smooth=True)
-    except:
-        canvas.create_rectangle(10, 10, 90, 40, fill="red", outline="red", width=2)  # Fallback for older Tk versions
+    # Rounded rectangle
+    canvas.create_rectangle(10, 10, 90, 40, fill="red", outline="red", width=2, smooth=True)
 
-    # Use a better font and styling for the text
+    # Text configuration
     live_font = tkFont.Font(family="Helvetica", size=12, weight="bold")
     canvas.create_text(50, 25, text="LIVE", fill="white", font=live_font)
 
-    # Adding a pulsating effect to the "LIVE" text
-    def pulsate():
-        current_color = canvas.itemcget(live_text, "fill")
-        new_color = "white" if current_color == "red" else "red"
-        canvas.itemconfig(live_text, fill=new_color)
-        overlay.after(1000, pulsate)  # Change color every second
+    return overlay, canvas, scene_var, scene_dropdown
 
-    live_text = canvas.create_text(50, 25, text="LIVE", fill="white", font=live_font)
-    pulsate()  # Start the pulsating effect
+def toggle_drag(window):
+    if window.overrideredirect():
+        window.overrideredirect(False)
+        window.config(cursor="fleur")
+    else:
+        window.overrideredirect(True)
+        window.config(cursor="")
 
-    return overlay, canvas
-
-def show_scene_selection(scenes, overlay):
-    print("Showing scene selection popup...")
-    selection_window = tk.Toplevel(overlay)
-    selection_window.title("Select Scene")
-    selection_window.geometry("600x400+100+100")  # Adjusted size for tile display
-    selection_window.resizable(False, False)
-    selection_window.configure(background='#2D2D2D')  # Dark background for a modern look
-
-    frame = tk.Frame(selection_window, bg='#2D2D2D')
-    frame.pack(expand=True, fill='both', padx=20, pady=20)  # Padding for aesthetics
-
-    # Styling
-    button_style = {'font': ('Helvetica', 12, 'bold'), 'background': '#4CAF50', 'foreground': 'white', 'activebackground': '#66BB6A', 'activeforeground': 'white', 'relief': 'flat', 'bd': 0, 'highlightthickness': 0}
-    hover_style = {'background': '#388E3C'}
-
-    def on_enter(e, btn):
-        btn.config(background=hover_style['background'])  # Change to hover background color
-
-    def on_leave(e, btn):
-        btn.config(background=button_style['background'])  # Revert to normal background color
-
-    # Create a button for each scene with modern styling and hover effects
-    num_cols = 3
-    num_rows = (len(scenes) + num_cols - 1) // num_cols
-    button_width = 180  # Adjusted for internal padding
-    button_height = 80
-
-    for index, scene_name in enumerate(scenes):
-        btn = tk.Button(frame, text=scene_name, command=lambda name=scene_name: set_scene(name, selection_window), **button_style)
-        btn.grid(row=index // num_cols, column=index % num_cols, padx=10, pady=10, sticky='nsew', ipadx=button_width // 2 - 50, ipady=button_height // 2 - 25)
-        btn.bind("<Enter>", lambda e, btn=btn: on_enter(e, btn))
-        btn.bind("<Leave>", lambda e, btn=btn: on_leave(e, btn))
-
-    # Ensuring the grid cells expand equally and buttons fill their cells
-    for i in range(num_cols):
-        frame.grid_columnconfigure(i, weight=1, uniform="group1")
-    for i in range(num_rows):
-        frame.grid_rowconfigure(i, weight=1, uniform="group1")
-
-def set_scene(scene, window):
+def set_scene(scene):
     global target_scene
     target_scene = scene
     print(f"Scene selected: {scene}")
-    window.destroy()
 
 def update_overlay_visibility(overlay, canvas, scene_name):
     if scene_name == target_scene:
@@ -102,7 +66,7 @@ def update_overlay_visibility(overlay, canvas, scene_name):
     else:
         overlay.withdraw()  # Hide the overlay otherwise
 
-def run_websocket(overlay, canvas):
+def run_websocket(overlay, canvas, scene_var, scene_dropdown):
     def on_message(ws, message):
         data = json.loads(message)
         print("Message received:", data)
@@ -134,7 +98,7 @@ def run_websocket(overlay, canvas):
         elif data['op'] == 7 and data['d']['requestType'] == 'GetSceneList':
             scenes = [scene['sceneName'] for scene in data['d']['responseData']['scenes']]
             print("Scenes fetched:", scenes)
-            overlay.after(0, lambda: show_scene_selection(scenes, overlay))
+            overlay.after(0, lambda: update_scene_dropdown(scene_dropdown, scenes))
         elif data['op'] == 5 and data['d']['eventType'] == 'CurrentProgramSceneChanged':
             current_scene = data['d']['eventData']['sceneName']
             update_overlay_visibility(overlay, canvas, current_scene)
@@ -156,7 +120,13 @@ def run_websocket(overlay, canvas):
                                 on_open=on_open)
     ws.run_forever()
 
+def update_scene_dropdown(scene_dropdown, scenes):
+    menu = scene_dropdown["menu"]
+    menu.delete(0, "end")
+    for scene in scenes:
+        menu.add_command(label=scene, command=lambda value=scene: scene_dropdown.setvar(scene_dropdown.cget("textvariable"), value))
+
 if __name__ == "__main__":
-    overlay, canvas = create_overlay()
-    threading.Thread(target=run_websocket, args=(overlay, canvas)).start()
+    overlay, canvas, scene_var, scene_dropdown = create_overlay()
+    threading.Thread(target=run_websocket, args=(overlay, canvas, scene_var, scene_dropdown)).start()
     overlay.mainloop()
