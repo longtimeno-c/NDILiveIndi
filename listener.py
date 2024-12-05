@@ -6,11 +6,20 @@ import threading
 import base64
 import hashlib
 import uuid
+import ctypes
 
 # Configuration
 host = "ws://obshost:obsport"  # Change to the IP and port of the OBS WebSocket server
 password = "obsWSpassword"  # Your OBS WebSocket password
 target_scene = None  # This will store the scene selected from the popup
+
+def minimize_console():
+    """Minimize console"""
+    hWnd = ctypes.windll.kernel32.GetConsoleWindow()
+    if hWnd:
+        ctypes.windll.user32.ShowWindow(hWnd, 6)
+
+minimize_console()
 
 def get_auth_response(password, secret, salt):
     passhash = base64.b64encode(hashlib.sha256((password + salt).encode('utf-8')).digest()).decode('utf-8')
