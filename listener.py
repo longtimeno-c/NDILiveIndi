@@ -8,11 +8,17 @@ import hashlib
 import uuid
 import ctypes
 import asyncio
+import requests
 from twitchio.ext import commands
 
 # Twitch Configuration
 TWITCH_CHANNEL = "twitchusername"  # Change this to your Twitch channel name
 TWITCH_TOKEN = "oauth:twitchaccess"  # Generate at https://twitchtokengenerator.com/
+
+# YouTube Configuration
+YOUTUBE_API_KEY = "cloud-key"  # Get from Google Developer Console
+YOUTUBE_CHANNEL_ID = "channel-key"  # Find from YouTube channel URL
+YOUTUBE_LIVE_CHAT_ID = None  # Will be fetched dynamically
 
 # OBS WebSocket Configuration
 host = "ws://ip:port"  # Change to the IP and port of the OBS WebSocket server
@@ -61,22 +67,22 @@ def create_overlay():
     return overlay, canvas
 
 def create_chat_overlay():
-    global chat_locked
     chat_overlay = tk.Toplevel()
-    chat_overlay.title("Twitch Chat")
+    chat_overlay.title("Chat Overlay")
     chat_overlay.geometry("+300+100")  # Initial position
     chat_overlay.attributes("-topmost", True)
-
-    # Allow window resizing before it's locked
-    chat_overlay.resizable(True, True)  # Enable resizing
-
+    
     chat_frame = tk.Frame(chat_overlay, bg="black")
     chat_frame.pack(fill="both", expand=True, padx=5, pady=5)
 
-    chat_box = tk.Text(chat_frame, wrap="word", height=10, width=30, bg="black", fg="white", font=("Helvetica", 10))
+    chat_box = tk.Text(chat_frame, wrap="word", height=15, width=50, bg="black", fg="white", font=("Helvetica", 10))
     chat_box.pack(expand=True, fill="both")
-    chat_box.insert("end", "Connecting to Twitch chat...\n")
+    chat_box.insert("end", "Connecting to Twitch and YouTube chat...\n")
     chat_box.config(state="disabled")
+
+    # Define color tags
+    chat_box.tag_configure("twitch", foreground="purple")  # Twitch messages
+    chat_box.tag_configure("youtube", foreground="red")  # YouTube messages
 
     return chat_overlay, chat_box
 
@@ -97,12 +103,13 @@ class TwitchChatBot(commands.Bot):
     async def event_message(self, message):
         if message.author is None:
             return
+        msg = f"Twitch | {message.author.name}: {message.content}\n"
+        self.update_chat_box(msg, "twitch")
 
-        msg = f"{message.author.name}: {message.content}\n"
-
-        # Update chat box in the Tkinter overlay
+    def update_chat_box(self, msg, tag):
+        """Insert a message into the chat box with color formatting."""
         self.chat_box.config(state="normal")
-        self.chat_box.insert("end", msg)
+        self.chat_box.insert("end", msg, tag)
         self.chat_box.yview("end")  # Auto-scroll
         self.chat_box.config(state="disabled")
 
@@ -113,6 +120,66 @@ def run_twitch_chat(chat_box):
 
     bot = TwitchChatBot(chat_box)
     loop.run_until_complete(bot.start())  # Ensures bot starts within the event loop
+
+# YouTube Chat Fetcher with Auto-Retry
+class YouTubeChatFetcher:
+    def __init__(self, chat_box):
+        self.chat_box = chat_box
+        self.running = True
+        self.live_chat_id = None
+        self.retry_interval = 30  # Retry every 30 seconds
+
+    async def get_live_chat_id(self):
+        """Retrieve the Live Chat ID for the current live stream, retrying every 30s if not found."""
+        while self.running:
+            url = f"https://www.googleapis.com/youtube/v3/liveBroadcasts?part=snippet&broadcastStatus=active&broadcastType=all&key={YOUTUBE_API_KEY}"
+            response = requests.get(url).json()
+
+            if "items" in response and response["items"]:
+                self.live_chat_id = response["items"][0]["snippet"]["liveChatId"]
+                print(f"Found YouTube Live Chat ID: {self.live_chat_id}")
+                return
+            else:
+                print("No active YouTube live stream found. Retrying in 30 seconds...")
+                await asyncio.sleep(self.retry_interval)  # Use asyncio.sleep() instead of time.sleep()
+
+    async def fetch_chat_messages(self):
+        """Continuously fetch live chat messages from YouTube."""
+        await self.get_live_chat_id()  # Wait until a live chat ID is found
+
+        if not self.live_chat_id:
+            return
+
+        url = f"https://www.googleapis.com/youtube/v3/liveChat/messages?liveChatId={self.live_chat_id}&part=snippet,authorDetails&key={YOUTUBE_API_KEY}"
+
+        while self.running:
+            response = requests.get(url).json()
+            if "items" in response:
+                for item in response["items"]:
+                    author = item["authorDetails"]["displayName"]
+                    message = item["snippet"]["displayMessage"]
+                    msg = f"YouTube | {author}: {message}\n"
+                    self.update_chat_box(msg, "youtube")
+            await asyncio.sleep(5)  # Use asyncio.sleep() instead of time.sleep()
+
+    def update_chat_box(self, msg, tag):
+        """Insert a message into the chat box with color formatting."""
+        self.chat_box.config(state="normal")
+        self.chat_box.insert("end", msg, tag)
+        self.chat_box.yview("end")  # Auto-scroll
+        self.chat_box.config(state="disabled")
+
+    def stop(self):
+        """Stop fetching chat messages."""
+        self.running = False
+
+# Function to run YouTube chat in a thread
+def run_youtube_chat(chat_box):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    fetcher = YouTubeChatFetcher(chat_box)
+    loop.run_until_complete(fetcher.fetch_chat_messages())
 
 def select_scene(scene, window):
     global target_scene
@@ -157,6 +224,12 @@ def show_scene_selection(scenes, overlay):
         grid_frame.rowconfigure(i, weight=1)
 
 # Function to update overlay visibility based on OBS scenes
+def update_overlay_visibility(overlay, canvas, scene_name):
+    if scene_name == target_scene:
+        overlay.deiconify()  # Show overlay if selected scene is active
+    else:
+        overlay.withdraw()  # Hide overlay otherwise
+
 def update_overlay_visibility(overlay, canvas, scene_name):
     if scene_name == target_scene:
         overlay.deiconify()  # Show overlay if selected scene is active
@@ -211,6 +284,9 @@ if __name__ == "__main__":
 
     # Start Twitch Chat in a separate thread
     threading.Thread(target=run_twitch_chat, args=(chat_box,), daemon=True).start()
+
+     # Start YouTube Chat in a separate thread with retry logic
+    threading.Thread(target=run_youtube_chat, args=(chat_box,), daemon=True).start()
 
     # Start OBS WebSocket connection in another thread
     threading.Thread(target=run_websocket, args=(overlay, canvas), daemon=True).start()
