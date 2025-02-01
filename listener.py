@@ -7,12 +7,20 @@ import base64
 import hashlib
 import uuid
 import ctypes
+import asyncio
+from twitchio.ext import commands
 
-# Configuration
-host = "ws://obshost:obsport"  # Change to the IP and port of the OBS WebSocket server
-password = "obsWSpassword"  # Your OBS WebSocket password
+# Twitch Configuration
+TWITCH_CHANNEL = "twitchusername"  # Change this to your Twitch channel name
+TWITCH_TOKEN = "oauth:twitchaccess"  # Generate at https://twitchtokengenerator.com/
+
+# OBS WebSocket Configuration
+host = "ws://ip:port"  # Change to the IP and port of the OBS WebSocket server
+password = "WSPasswrd"  # Your OBS WebSocket password
 target_scene = None  # This will store the scene selected from the popup
+chat_locked = False  # Track if the chat box should be locked
 
+# Minimize console window
 def minimize_console():
     """Minimize console"""
     hWnd = ctypes.windll.kernel32.GetConsoleWindow()
@@ -29,120 +37,153 @@ def get_auth_response(password, secret, salt):
 def create_overlay():
     overlay = tk.Tk()
     overlay.title("Live Indicator")
-    overlay.geometry("+{}+{}".format(overlay.winfo_screenwidth() - 150, 500))  # Slightly adjusted position for aesthetics
+    overlay.geometry("+{}+{}".format(overlay.winfo_screenwidth() - 200, 500))  # Adjusted position
     overlay.attributes("-topmost", True)
     overlay.overrideredirect(True)
-    overlay.attributes("-alpha", 0.85)  # Adjust transparency of the window
+    overlay.attributes("-alpha", 0.85)  # Adjust transparency
 
-    # Use a more modern looking canvas with rounded corners
-    canvas = tk.Canvas(overlay, width=100, height=50, bg='red', bd=0, highlightthickness=0)
+    # Canvas for "LIVE" indicator
+    canvas = tk.Canvas(overlay, width=120, height=50, bg='red', bd=0, highlightthickness=0)
     canvas.pack()
 
-    # Create a rounded rectangle (if your system supports it)
-    try:
-        canvas.create_rectangle(10, 10, 90, 40, fill="red", outline="red", width=2, smooth=True)
-    except:
-        canvas.create_rectangle(10, 10, 90, 40, fill="red", outline="red", width=2)  # Fallback for older Tk versions
-
-    # Use a better font and styling for the text
     live_font = tkFont.Font(family="Helvetica", size=12, weight="bold")
-    canvas.create_text(50, 25, text="LIVE", fill="white", font=live_font)
+    live_text = canvas.create_text(60, 25, text="LIVE", fill="white", font=live_font)
 
-    # Adding a pulsating effect to the "LIVE" text
+    # Pulsating effect
     def pulsate():
         current_color = canvas.itemcget(live_text, "fill")
         new_color = "white" if current_color == "red" else "red"
         canvas.itemconfig(live_text, fill=new_color)
-        overlay.after(1000, pulsate)  # Change color every second
+        overlay.after(1000, pulsate)
 
-    live_text = canvas.create_text(50, 25, text="LIVE", fill="white", font=live_font)
-    pulsate()  # Start the pulsating effect
+    pulsate()
 
     return overlay, canvas
 
-def show_scene_selection(scenes, overlay):
-    print("Showing scene selection popup...")
-    selection_window = tk.Toplevel(overlay)
-    selection_window.title("Select Scene")
-    selection_window.geometry("600x400+100+100")  # Adjusted size for tile display
-    selection_window.resizable(False, False)
-    selection_window.configure(background='#2D2D2D')  # Dark background for a modern look
+def create_chat_overlay():
+    global chat_locked
+    chat_overlay = tk.Toplevel()
+    chat_overlay.title("Twitch Chat")
+    chat_overlay.geometry("+300+100")  # Initial position
+    chat_overlay.attributes("-topmost", True)
 
-    frame = tk.Frame(selection_window, bg='#2D2D2D')
-    frame.pack(expand=True, fill='both', padx=20, pady=20)  # Padding for aesthetics
+    # Allow window resizing before it's locked
+    chat_overlay.resizable(True, True)  # Enable resizing
 
-    # Styling
-    button_style = {'font': ('Helvetica', 12, 'bold'), 'background': '#4CAF50', 'foreground': 'white', 'activebackground': '#66BB6A', 'activeforeground': 'white', 'relief': 'flat', 'bd': 0, 'highlightthickness': 0}
-    hover_style = {'background': '#388E3C'}
+    chat_frame = tk.Frame(chat_overlay, bg="black")
+    chat_frame.pack(fill="both", expand=True, padx=5, pady=5)
 
-    def on_enter(e, btn):
-        btn.config(background=hover_style['background'])  # Change to hover background color
+    chat_box = tk.Text(chat_frame, wrap="word", height=10, width=30, bg="black", fg="white", font=("Helvetica", 10))
+    chat_box.pack(expand=True, fill="both")
+    chat_box.insert("end", "Connecting to Twitch chat...\n")
+    chat_box.config(state="disabled")
 
-    def on_leave(e, btn):
-        btn.config(background=button_style['background'])  # Revert to normal background color
+    return chat_overlay, chat_box
 
-    # Create a button for each scene with modern styling and hover effects
-    num_cols = 3
-    num_rows = (len(scenes) + num_cols - 1) // num_cols
-    button_width = 180  # Adjusted for internal padding
-    button_height = 80
 
-    for index, scene_name in enumerate(scenes):
-        btn = tk.Button(frame, text=scene_name, command=lambda name=scene_name: set_scene(name, selection_window), **button_style)
-        btn.grid(row=index // num_cols, column=index % num_cols, padx=10, pady=10, sticky='nsew', ipadx=button_width // 2 - 50, ipady=button_height // 2 - 25)
-        btn.bind("<Enter>", lambda e, btn=btn: on_enter(e, btn))
-        btn.bind("<Leave>", lambda e, btn=btn: on_leave(e, btn))
+def lock_chat_position():
+    global chat_locked
+    chat_locked = True
 
-    # Ensuring the grid cells expand equally and buttons fill their cells
-    for i in range(num_cols):
-        frame.grid_columnconfigure(i, weight=1, uniform="group1")
-    for i in range(num_rows):
-        frame.grid_rowconfigure(i, weight=1, uniform="group1")
+# Twitch Chat Bot
+class TwitchChatBot(commands.Bot):
+    def __init__(self, chat_box):
+        super().__init__(token=TWITCH_TOKEN, prefix="!", initial_channels=[TWITCH_CHANNEL])
+        self.chat_box = chat_box
 
-def set_scene(scene, window):
+    async def event_ready(self):
+        print(f"Connected to Twitch chat as {self.nick}")
+
+    async def event_message(self, message):
+        if message.author is None:
+            return
+
+        msg = f"{message.author.name}: {message.content}\n"
+
+        # Update chat box in the Tkinter overlay
+        self.chat_box.config(state="normal")
+        self.chat_box.insert("end", msg)
+        self.chat_box.yview("end")  # Auto-scroll
+        self.chat_box.config(state="disabled")
+
+# Function to run the Twitch bot in a thread
+def run_twitch_chat(chat_box):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    bot = TwitchChatBot(chat_box)
+    loop.run_until_complete(bot.start())  # Ensures bot starts within the event loop
+
+def select_scene(scene, window):
     global target_scene
     target_scene = scene
-    print(f"Scene selected: {scene}")
+    lock_chat_position()
+    chat_overlay.overrideredirect(True)  # Lock chat box in overlay mode
+    chat_overlay.lower(overlay)
     window.destroy()
 
+# Function to show the scene selection popup
+def show_scene_selection(scenes, overlay):
+    global target_scene
+
+    rows = (len(scenes) // 3) + (1 if len(scenes) % 3 else 0)
+    window_width = 450  # Adjust width dynamically if needed
+    window_height = max(100 + (rows * 80), 300)  # Adjust height based on rows
+
+    selection_window = tk.Toplevel(overlay)
+    selection_window.title("Select Scene")
+    selection_window.geometry(f"{window_width}x{window_height}")
+    selection_window.configure(bg='black')
+    selection_window.attributes("-topmost", True)
+
+    label = tk.Label(selection_window, text="Select the scene to show overlay:", fg='white', bg='black')
+    label.pack(pady=5)
+
+    scene_var = tk.StringVar(value=scenes[0] if scenes else "")
+
+    grid_frame = tk.Frame(selection_window, bg='black')
+    grid_frame.pack(pady=5, padx=5, fill=tk.BOTH, expand=True)
+
+    for index, scene in enumerate(scenes):
+        row, col = divmod(index, 3)  # Arrange in grid (3 per row)
+        
+        btn = tk.Button(grid_frame, text=scene, width=20, height=4, bg='green', fg='black', 
+                        command=lambda s=scene: select_scene(s, selection_window))
+        btn.grid(row=row, column=col, padx=5, pady=5, sticky='nsew')
+    
+    for i in range(3):
+        grid_frame.columnconfigure(i, weight=1)
+    for i in range(rows):
+        grid_frame.rowconfigure(i, weight=1)
+
+# Function to update overlay visibility based on OBS scenes
 def update_overlay_visibility(overlay, canvas, scene_name):
     if scene_name == target_scene:
-        overlay.deiconify()  # Show the overlay if the selected scene is active
+        overlay.deiconify()  # Show overlay if selected scene is active
     else:
-        overlay.withdraw()  # Hide the overlay otherwise
+        overlay.withdraw()  # Hide overlay otherwise
 
+# Function to run the OBS WebSocket connection
 def run_websocket(overlay, canvas):
     def on_message(ws, message):
         data = json.loads(message)
-        print("Message received:", data)
         if data['op'] == 0:  # Hello message with auth challenge
-            print("Processing authentication...")
             secret = data['d']['authentication']['challenge']
             salt = data['d']['authentication']['salt']
             auth_response = get_auth_response(password, secret, salt)
             auth_payload = {
-                'op': 1,  # Identify operation
-                'd': {
-                    'rpcVersion': 1,
-                    'authentication': auth_response,
-                    'eventSubscriptions': 5  # Subscribe to scene events
-                }
+                'op': 1,
+                'd': {'rpcVersion': 1, 'authentication': auth_response, 'eventSubscriptions': 5}
             }
             ws.send(json.dumps(auth_payload))
-        elif data['op'] == 2:  # Authentication success message
-            print("Authentication successful, requesting scenes...")
+        elif data['op'] == 2:  # Auth success
             scene_request_payload = {
-                'op': 6,  # Scene request operation
-                'd': {
-                    'resource': 'ScenesService',
-                    'requestType': 'GetSceneList',
-                    'requestId': str(uuid.uuid4())
-                }
+                'op': 6,
+                'd': {'resource': 'ScenesService', 'requestType': 'GetSceneList', 'requestId': str(uuid.uuid4())}
             }
             ws.send(json.dumps(scene_request_payload))
         elif data['op'] == 7 and data['d']['requestType'] == 'GetSceneList':
             scenes = [scene['sceneName'] for scene in data['d']['responseData']['scenes']]
-            print("Scenes fetched:", scenes)
             overlay.after(0, lambda: show_scene_selection(scenes, overlay))
         elif data['op'] == 5 and data['d']['eventType'] == 'CurrentProgramSceneChanged':
             current_scene = data['d']['eventData']['sceneName']
@@ -152,11 +193,10 @@ def run_websocket(overlay, canvas):
         print(f"WebSocket Error: {error}")
 
     def on_close(ws, status_code, msg):
-        print("### Connection Closed ###")
-        print(f"Closed with status code: {status_code}, message: {msg}")
+        print(f"### OBS Connection Closed ### {status_code}, message: {msg}")
 
     def on_open(ws):
-        print("WebSocket connection opened. Waiting for authentication...")
+        print("Connected to OBS WebSocket.")
 
     ws = websocket.WebSocketApp(host,
                                 on_message=on_message,
@@ -167,5 +207,13 @@ def run_websocket(overlay, canvas):
 
 if __name__ == "__main__":
     overlay, canvas = create_overlay()
-    threading.Thread(target=run_websocket, args=(overlay, canvas)).start()
+    chat_overlay, chat_box = create_chat_overlay()
+
+    # Start Twitch Chat in a separate thread
+    threading.Thread(target=run_twitch_chat, args=(chat_box,), daemon=True).start()
+
+    # Start OBS WebSocket connection in another thread
+    threading.Thread(target=run_websocket, args=(overlay, canvas), daemon=True).start()
+
     overlay.mainloop()
+    chat_overlay.mainloop()
