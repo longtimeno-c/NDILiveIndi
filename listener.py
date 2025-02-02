@@ -10,6 +10,7 @@ import ctypes
 import asyncio
 import requests
 import time
+import aiohttp
 from twitchio.ext import commands
 
 # Twitch Configuration
@@ -131,39 +132,76 @@ class YouTubeChatFetcher:
         self.running = True
         self.live_chat_id = None
         self.retry_interval = 30  # Retry every 30 seconds
+        self.api_key = YOUTUBE_API_KEY
+        self.channel_id = YOUTUBE_CHANNEL_ID
+        self.processed_message_ids = set()  # Track processed message IDs
 
     async def get_live_chat_id(self):
         """Retrieve the Live Chat ID for the current live stream, retrying every 30s if not found."""
         while self.running:
-            url = f"https://www.googleapis.com/youtube/v3/liveBroadcasts?part=snippet&broadcastStatus=active&broadcastType=all&key={YOUTUBE_API_KEY}"
-            response = requests.get(url).json()
+            search_url = f"https://www.googleapis.com/youtube/v3/search?part=id,snippet&channelId={self.channel_id}&eventType=live&type=video&key={self.api_key}"
 
-            if "items" in response and response["items"]:
-                self.live_chat_id = response["items"][0]["snippet"]["liveChatId"]
-                print(f"Found YouTube Live Chat ID: {self.live_chat_id}")
-                return
+            async with aiohttp.ClientSession() as session:
+                async with session.get(search_url) as response:
+                    search_response = await response.json()
+
+            if "items" in search_response and search_response["items"]:
+                video_id = None
+                for item in search_response["items"]:
+                    if item["snippet"]["liveBroadcastContent"] == "live":
+                        video_id = item["id"]["videoId"]
+                        break
+
+                if video_id:
+                    chat_url = f"https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id={video_id}&key={self.api_key}"
+
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(chat_url) as response:
+                            chat_response = await response.json()
+
+                    if "items" in chat_response and chat_response["items"]:
+                        self.live_chat_id = chat_response["items"][0]["liveStreamingDetails"]["activeLiveChatId"]
+                        print(f"✅ Live Chat ID Found: {self.live_chat_id}")
+                        return
+                    else:
+                        print("❌ Live stream found, but no active chat detected.")
+                else:
+                    print("❌ No live video found.")
             else:
-                print("No active YouTube live stream found. Retrying in 30 seconds...")
-                await asyncio.sleep(self.retry_interval)  # Use asyncio.sleep() instead of time.sleep()
+                print("❌ No active YouTube live stream found. Retrying in 30 seconds...")
+
+            await asyncio.sleep(self.retry_interval)  # Async wait before retrying
 
     async def fetch_chat_messages(self):
         """Continuously fetch live chat messages from YouTube."""
         await self.get_live_chat_id()  # Wait until a live chat ID is found
 
         if not self.live_chat_id:
+            print("❌ No live chat available. Exiting chat fetcher.")
             return
 
-        url = f"https://www.googleapis.com/youtube/v3/liveChat/messages?liveChatId={self.live_chat_id}&part=snippet,authorDetails&key={YOUTUBE_API_KEY}"
+        url = f"https://www.googleapis.com/youtube/v3/liveChat/messages?liveChatId={self.live_chat_id}&part=snippet,authorDetails&key={self.api_key}"
 
         while self.running:
-            response = requests.get(url).json()
-            if "items" in response:
-                for item in response["items"]:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    chat_response = await response.json()
+
+            if "items" in chat_response:
+                for item in chat_response["items"]:
+                    message_id = item["id"]  # Unique message ID
+
+                    # Only process new messages
+                    if message_id in self.processed_message_ids:
+                        continue
+                    self.processed_message_ids.add(message_id)  # Mark message as processed
+
                     author = item["authorDetails"]["displayName"]
                     message = item["snippet"]["displayMessage"]
                     msg = f"YouTube | {author}: {message}\n"
                     self.update_chat_box(msg, "youtube")
-            await asyncio.sleep(5)  # Use asyncio.sleep() instead of time.sleep()
+            
+            await asyncio.sleep(5)  # Wait before fetching the next batch of messages
 
     def update_chat_box(self, msg, tag):
         """Insert a message into the chat box with color formatting."""
