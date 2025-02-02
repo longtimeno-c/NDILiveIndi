@@ -9,6 +9,7 @@ import uuid
 import ctypes
 import asyncio
 import requests
+import time
 from twitchio.ext import commands
 
 # Twitch Configuration
@@ -52,7 +53,7 @@ def create_overlay():
     canvas = tk.Canvas(overlay, width=120, height=50, bg='red', bd=0, highlightthickness=0)
     canvas.pack()
 
-    live_font = tkFont.Font(family="Helvetica", size=12, weight="bold")
+    live_font = tkFont.Font(family="Helvetica", size=15, weight="bold")
     live_text = canvas.create_text(60, 25, text="LIVE", fill="white", font=live_font)
 
     # Pulsating effect
@@ -69,20 +70,22 @@ def create_overlay():
 def create_chat_overlay():
     chat_overlay = tk.Toplevel()
     chat_overlay.title("Chat Overlay")
-    chat_overlay.geometry("+300+100")  # Initial position
+    chat_overlay.geometry("+800+200")  # Initial position
     chat_overlay.attributes("-topmost", True)
     
     chat_frame = tk.Frame(chat_overlay, bg="black")
-    chat_frame.pack(fill="both", expand=True, padx=5, pady=5)
+    chat_frame.pack(fill="both", expand=True, padx=0, pady=0)  # Remove padding
 
-    chat_box = tk.Text(chat_frame, wrap="word", height=15, width=50, bg="black", fg="white", font=("Helvetica", 10))
+    chat_box = tk.Text(chat_frame, wrap="word", height=15, width=45, 
+                       bg="black", fg="white", font=("Helvetica", 14, "bold"), 
+                       bd=0, highlightthickness=0) 
     chat_box.pack(expand=True, fill="both")
     chat_box.insert("end", "Connecting to Twitch and YouTube chat...\n")
     chat_box.config(state="disabled")
 
     # Define color tags
-    chat_box.tag_configure("twitch", foreground="purple")  # Twitch messages
-    chat_box.tag_configure("youtube", foreground="red")  # YouTube messages
+    chat_box.tag_configure("twitch", foreground="white", background="purple")  # Twitch messages highlighted
+    chat_box.tag_configure("youtube", foreground="white", background="red")  # YouTube messages highlighted
 
     return chat_overlay, chat_box
 
@@ -187,6 +190,7 @@ def select_scene(scene, window):
     lock_chat_position()
     chat_overlay.overrideredirect(True)  # Lock chat box in overlay mode
     chat_overlay.lower(overlay)
+    chat_overlay.attributes("-transparentcolor", "black")
     window.destroy()
 
 # Function to show the scene selection popup
@@ -236,7 +240,7 @@ def update_overlay_visibility(overlay, canvas, scene_name):
     else:
         overlay.withdraw()  # Hide overlay otherwise
 
-# Function to run the OBS WebSocket connection
+# Function to run the OBS WebSocket connection with reconnect logic
 def run_websocket(overlay, canvas):
     def on_message(ws, message):
         data = json.loads(message)
@@ -267,16 +271,26 @@ def run_websocket(overlay, canvas):
 
     def on_close(ws, status_code, msg):
         print(f"### OBS Connection Closed ### {status_code}, message: {msg}")
+        reconnect()
 
     def on_open(ws):
         print("Connected to OBS WebSocket.")
 
-    ws = websocket.WebSocketApp(host,
-                                on_message=on_message,
-                                on_error=on_error,
-                                on_close=on_close,
-                                on_open=on_open)
-    ws.run_forever()
+    def connect():
+        ws = websocket.WebSocketApp(host,
+                                    on_message=on_message,
+                                    on_error=on_error,
+                                    on_close=on_close,
+                                    on_open=on_open)
+        ws.run_forever()
+
+    def reconnect():
+        print("Reconnecting in 5 seconds...")
+        time.sleep(5)  # Wait before reconnecting
+        connect()
+
+    # Initial connection
+    connect()
 
 if __name__ == "__main__":
     overlay, canvas = create_overlay()
