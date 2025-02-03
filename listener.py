@@ -1,3 +1,20 @@
+import ctypes
+import sys
+
+def is_admin():
+    """Check if script is running as administrator."""
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except:
+        return False
+if not is_admin():
+    # Relaunch the script with admin rights
+    print("🔒 Requesting administrator privileges...")
+    ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
+    sys.exit()  # Exit the original script to prevent duplicate execution
+
+print("✅ Running as administrator!")
+
 import tkinter as tk
 from tkinter import font as tkFont
 import websocket
@@ -6,11 +23,10 @@ import threading
 import base64
 import hashlib
 import uuid
-import ctypes
 import asyncio
-import requests
 import time
 import aiohttp
+import keyboard
 from twitchio.ext import commands
 
 # Twitch Configuration
@@ -27,6 +43,8 @@ host = "ws://ip:port"  # Change to the IP and port of the OBS WebSocket server
 password = "WSPasswrd"  # Your OBS WebSocket password
 target_scene = None  # This will store the scene selected from the popup
 chat_locked = False  # Track if the chat box should be locked
+ws_connection = None # Global websocket connection 
+hotkey_registered = False  # Track if F8 hotkey is registered
 
 # Minimize console window
 def minimize_console():
@@ -280,7 +298,10 @@ def update_overlay_visibility(overlay, canvas, scene_name):
 
 # Function to run the OBS WebSocket connection with reconnect logic
 def run_websocket(overlay, canvas):
+    global ws_connection, hotkey_registered
+
     def on_message(ws, message):
+        global ws_connection, hotkey_registered
         data = json.loads(message)
         if data['op'] == 0:  # Hello message with auth challenge
             secret = data['d']['authentication']['challenge']
@@ -292,6 +313,14 @@ def run_websocket(overlay, canvas):
             }
             ws.send(json.dumps(auth_payload))
         elif data['op'] == 2:  # Auth success
+            ws_connection = ws
+
+            # Bind the F8 hotkey only if it's not already registered
+            if not hotkey_registered:
+                keyboard.add_hotkey("F8", switch_scene)
+                hotkey_registered = True
+                print("🎯 F8 hotkey bound to switch scenes.")
+
             scene_request_payload = {
                 'op': 6,
                 'd': {'resource': 'ScenesService', 'requestType': 'GetSceneList', 'requestId': str(uuid.uuid4())}
@@ -309,6 +338,8 @@ def run_websocket(overlay, canvas):
 
     def on_close(ws, status_code, msg):
         print(f"### OBS Connection Closed ### {status_code}, message: {msg}")
+        global ws_connection
+        ws_connection = None # Clear connection on close
         reconnect()
 
     def on_open(ws):
@@ -329,6 +360,35 @@ def run_websocket(overlay, canvas):
 
     # Initial connection
     connect()
+
+def switch_scene():
+    """Switch the OBS scene to the target scene using the existing WebSocket connection."""
+    global ws_connection
+
+    if not ws_connection:
+        print("⚠️ WebSocket not connected. Scene switch failed.")
+        return
+    if not target_scene:
+        print("⚠️ No target scene selected. Scene switch failed.")
+        return
+
+    # Send request to change scene
+    change_scene_payload = {
+        "op": 6,
+        "d": {
+            "requestId": str(uuid.uuid4()),
+            "requestType": "SetCurrentProgramScene",
+            "requestData": {
+                "sceneName": target_scene
+            }
+        }
+    }
+
+    try:
+        ws_connection.send(json.dumps(change_scene_payload))
+        print(f"🔄 Switched to scene: {target_scene}")
+    except Exception as e:
+        print(f"⚠️ Failed to switch scene: {e}")
 
 if __name__ == "__main__":
     overlay, canvas = create_overlay()
