@@ -1,20 +1,98 @@
 # NDILiveIndi: A Live Indicator for Multi-PC NDI Stream Setups
+
 ## Overview
-NDILiveIndi is a utility designed for multi-PC streaming setups using OBS and NDI technology. It provides a live indicator that activates when a specific scene or source is active on the main streaming computer. This tool is particularly useful for setups where multiple computers manage different elements of a broadcast, such as game streaming, live performances, or multi-camera setups.
+**NDILiveIndi** is a utility designed for **multi-PC streaming setups** using **OBS and NDI technology**. It provides a **live indicator** that activates when a specific scene or source is active on the main streaming computer. Additionally, it integrates **Twitch and YouTube chat overlays**, making it ideal for streamers handling **multi-camera, gameplay, and live event setups**.
 
 ## Features
-- **Dynamic Scene Selection:** Automatically detects and lists all available scenes from the OBS setup on the main streaming computer, allowing users to select which scene or source to monitor through a user-friendly interface.
-- **Live Indicator Overlay:** Displays a live indicator on the computer that is currently being used as the source in the stream whenever the selected scene is active.
-- **Multi-PC Compatibility:** Designed to work seamlessly in environments where multiple computers are connected via NDI for streaming purposes.
+- **Dynamic Scene Selection:**  
+  - Automatically detects and lists all available scenes from OBS on the main streaming PC.
+  - Users can select which scene to monitor through a simple GUI.
+  
+- **Live Indicator Overlay:**  
+  - Displays a **"LIVE"** indicator on the source PC when the selected scene is active.
+  - Pulsating effect to enhance visibility.
+
+- **Multi-PC Compatibility:**  
+  - Works seamlessly with **NDI-enabled setups** where multiple computers send video feeds to the main streaming PC.
+
+- **Twitch & YouTube Chat Integration:**  
+  - Displays chat messages in an **overlay**.
+  - Supports **Twitch** chat via a bot.
+  - Fetches **YouTube Live Chat** dynamically, with automatic retries if no live stream is found.
+
+- **Auto-Reconnect & Robust WebSocket Communication:**  
+  - Automatically reconnects to OBS WebSocket if the connection drops.
+
 ## Requirements
-- OBS Studio with the OBS WebSocket plugin installed to enable remote control capabilities.
-Python environment with the necessary libraries installed (tkinter for the GUI and websocket-client for WebSocket communication).
-- At least two computers: One serving as the main streaming PC and others as sources, all connected in a network that supports NDI streaming.
-## Setup and Operation
-- **Install OBS WebSocket Plugin:** Ensure that OBS Studio on the main streaming PC has the OBS WebSocket plugin installed and configured.
-- **Configure IP and Password:** Modify the script to include the IP address and WebSocket password of the main streaming PC to establish a secure connection.
-- **Run the Script:** Execute the script on each source PC where you want the live indicator to appear. The script will automatically connect to the main streaming PC, retrieve the list of available scenes, and prompt the user to select the source to monitor.
-- **Select the Scene:** Use the generated GUI to select the scene that, when live, will trigger the live indicator on the current PC.
-- **Monitor the Stream:** The live indicator will automatically display on the source PC whenever the selected scene is active on the main streaming PC.
-## Use Case
-This tool is perfect for live streamers who use multiple computers to manage different elements of their stream, such as gaming, chatting, or handling multimedia sources. It enhances control and awareness, ensuring smooth transitions and professional-quality streaming.
+### Software
+- **OBS Studio** with the **OBS WebSocket Plugin** installed (for remote control).
+- **Python** environment with required dependencies installed.
+
+### Hardware
+- At least **two computers**:
+  - **Main Streaming PC:** Runs OBS and manages the stream.
+  - **Source PCs:** Send video feeds via **NDI** and display the **LIVE** indicator.
+- **Network Connectivity:**  
+  - All PCs must be on the **same network** to support NDI streaming and WebSocket communication.
+
+## Installation & Setup
+### 1. Install Dependencies
+Ensure you have **Python** installed, then install the required libraries:
+
+pip install websocket-client requests aiohttp twitchio
+
+### 2. Install & Configure OBS WebSocket Plugin
+- Download the **OBS WebSocket plugin** from [here](https://github.com/obsproject/obs-websocket).
+- Enable the WebSocket server in OBS:
+  - **Tools → WebSocket Server Settings**
+  - Enable WebSocket
+  - Set a **password** for security.
+
+### 3. Configure the Script
+Modify the **configuration variables** in the script:
+
+#### OBS WebSocket Settings
+host = "ws://<OBS-PC-IP>:<PORT>"  # Replace with the OBS WebSocket IP and Port
+password = "your_OBS_websocket_password"
+
+#### Twitch Chat Configuration
+TWITCH_CHANNEL = "your_twitch_channel"
+TWITCH_TOKEN = "oauth:your_twitch_oauth_token"  # Generate from https://twitchtokengenerator.com/
+
+#### YouTube Live Chat Configuration
+YOUTUBE_API_KEY = "your_google_cloud_api_key"
+YOUTUBE_CHANNEL_ID = "your_youtube_channel_id"
+
+### 4. Run the Script
+Run the script on each **source PC** where you want the **LIVE** indicator to appear:
+
+python ndiliveindi.py
+
+## Usage
+1. **Select the Scene to Monitor:**  
+   - When the script starts, it will retrieve scenes from OBS.
+   - A popup will appear, allowing you to **select the scene** that will trigger the live indicator.
+  
+2. **Monitor the Stream:**  
+   - The selected PC will display a **LIVE indicator** whenever the chosen scene is active in OBS.
+   - The **chat overlay** will fetch messages from **Twitch & YouTube**.
+
+3. **Automatic Handling:**  
+   - The script will **reconnect automatically** if OBS WebSocket disconnects.
+   - YouTube live chat will retry fetching messages every **30 seconds** if no live stream is found.
+
+## Troubleshooting
+### OBS WebSocket Not Connecting?
+- Ensure OBS WebSocket is **enabled** and the correct **IP & Port** are configured.
+- Check that the WebSocket **password matches** the one in the script.
+
+### Twitch or YouTube Chat Not Appearing?
+- Verify that the **Twitch OAuth token** is correct.
+- Ensure the **YouTube API key** is valid and linked to your channel.
+
+### Live Indicator Not Appearing?
+- Confirm that the **OBS scene name matches** the one selected in the script.
+- Ensure that **NDI is properly configured** between PCs.
+
+## License
+**NDILiveIndi** is released under the **MIT License**. Feel free to modify and distribute it.
