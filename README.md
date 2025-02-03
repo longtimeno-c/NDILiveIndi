@@ -38,9 +38,9 @@
 ## Installation & Setup
 ### 1. Install Dependencies
 Ensure you have **Python** installed, then install the required libraries:
-
+```
 pip install websocket-client requests aiohttp twitchio
-
+```
 ### 2. Install & Configure OBS WebSocket Plugin
 - Download the **OBS WebSocket plugin** from [here](https://github.com/obsproject/obs-websocket).
 - Enable the WebSocket server in OBS:
@@ -52,21 +52,22 @@ pip install websocket-client requests aiohttp twitchio
 Modify the **configuration variables** in the script:
 
 #### OBS WebSocket Settings
+```
 host = "ws://<OBS-PC-IP>:<PORT>"  # Replace with the OBS WebSocket IP and Port
 password = "your_OBS_websocket_password"
-
+```
 #### Twitch Chat Configuration
+```
 TWITCH_CHANNEL = "your_twitch_channel"
 TWITCH_TOKEN = "oauth:your_twitch_oauth_token"  # Generate from https://twitchtokengenerator.com/
-
+```
 #### YouTube Live Chat Configuration
+```
 YOUTUBE_API_KEY = "your_google_cloud_api_key"
 YOUTUBE_CHANNEL_ID = "your_youtube_channel_id"
-
+```
 ### 4. Run the Script
 Run the script on each **source PC** where you want the **LIVE** indicator to appear:
-
-python ndiliveindi.py
 
 ## Usage
 1. **Select the Scene to Monitor:**  
