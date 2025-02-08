@@ -1,20 +1,4 @@
 import ctypes
-import sys
-
-def is_admin():
-    """Check if script is running as administrator."""
-    try:
-        return ctypes.windll.shell32.IsUserAnAdmin()
-    except:
-        return False
-if not is_admin():
-    # Relaunch the script with admin rights
-    print("🔒 Requesting administrator privileges...")
-    ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
-    sys.exit()  # Exit the original script to prevent duplicate execution
-
-print("✅ Running as administrator!")
-
 import tkinter as tk
 from tkinter import font as tkFont
 import websocket
