@@ -7,20 +7,8 @@ import threading
 import base64
 import hashlib
 import uuid
-import asyncio
 import time
-import aiohttp
 import keyboard
-from twitchio.ext import commands
-
-# Twitch Configuration
-TWITCH_CHANNEL = "twitchusername"  # Change this to your Twitch channel name
-TWITCH_TOKEN = "oauth:twitchaccess"  # Generate at https://twitchtokengenerator.com/
-
-# YouTube Configuration
-YOUTUBE_API_KEY = "cloud-key"  # Get from Google Developer Console
-YOUTUBE_CHANNEL_ID = "channel-key"  # Find from YouTube channel URL
-YOUTUBE_LIVE_CHAT_ID = None  # Will be fetched dynamically
 
 # OBS WebSocket Configuration
 host = "ws://ip:port"  # Change to the IP and port of the OBS WebSocket server
@@ -29,6 +17,14 @@ target_scene = None  # This will store the scene selected from the popup
 chat_locked = False  # Track if the chat box should be locked
 ws_connection = None # Global websocket connection 
 hotkey_registered = False  # Track if F8 hotkey is registered
+
+# Chat API Configuration
+CHAT_API_URL = "ws://watch.stream150.com/api/chat"  # Your chat API WebSocket URL
+chat_api_key = None  # Will be set after fetching from server
+chat_ws = None  # Global chat WebSocket connection
+chat_reconnect_attempts = 0
+chat_max_reconnect_attempts = 5
+chat_reconnect_delay = 3000  # Base delay in milliseconds
 
 # Minimize console window
 def minimize_console():
@@ -83,146 +79,103 @@ def create_chat_overlay():
                        bg="black", fg="white", font=("Helvetica", 14, "bold"), 
                        bd=0, highlightthickness=0) 
     chat_box.pack(expand=True, fill="both")
-    chat_box.insert("end", "Connecting to Twitch and YouTube chat...\n")
+    chat_box.insert("end", "Connecting to chat...\n")
     chat_box.config(state="disabled")
 
-    # Define color tags
-    chat_box.tag_configure("twitch", foreground="white", background="purple")  # Twitch messages highlighted
-    chat_box.tag_configure("youtube", foreground="white", background="red")  # YouTube messages highlighted
+    # Define color tags for different platforms
+    chat_box.tag_configure("twitch", foreground="white", background="purple")
+    chat_box.tag_configure("youtube", foreground="white", background="red")
+    chat_box.tag_configure("web", foreground="white", background="blue")
 
     return chat_overlay, chat_box
-
 
 def lock_chat_position():
     global chat_locked
     chat_locked = True
 
-# Twitch Chat Bot
-class TwitchChatBot(commands.Bot):
-    def __init__(self, chat_box):
-        super().__init__(token=TWITCH_TOKEN, prefix="!", initial_channels=[TWITCH_CHANNEL])
-        self.chat_box = chat_box
+def update_chat_box(chat_box, message, platform):
+    """Insert a message into the chat box with color formatting."""
+    chat_box.config(state="normal")
+    msg = f"{platform} | {message['username']}: {message['message']}\n"
+    chat_box.insert("end", msg, platform.lower())
+    chat_box.yview("end")  # Auto-scroll
+    chat_box.config(state="disabled")
 
-    async def event_ready(self):
-        print(f"Connected to Twitch chat as {self.nick}")
+# Chat API WebSocket Handler
+def run_chat_client(chat_box):
+    global chat_api_key, chat_ws, chat_reconnect_attempts
 
-    async def event_message(self, message):
-        if message.author is None:
-            return
-        msg = f"Twitch | {message.author.name}: {message.content}\n"
-        self.update_chat_box(msg, "twitch")
-
-    def update_chat_box(self, msg, tag):
-        """Insert a message into the chat box with color formatting."""
-        self.chat_box.config(state="normal")
-        self.chat_box.insert("end", msg, tag)
-        self.chat_box.yview("end")  # Auto-scroll
-        self.chat_box.config(state="disabled")
-
-# Function to run the Twitch bot in a thread
-def run_twitch_chat(chat_box):
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    bot = TwitchChatBot(chat_box)
-    loop.run_until_complete(bot.start())  # Ensures bot starts within the event loop
-
-# YouTube Chat Fetcher with Auto-Retry
-class YouTubeChatFetcher:
-    def __init__(self, chat_box):
-        self.chat_box = chat_box
-        self.running = True
-        self.live_chat_id = None
-        self.retry_interval = 30  # Retry every 30 seconds
-        self.api_key = YOUTUBE_API_KEY
-        self.channel_id = YOUTUBE_CHANNEL_ID
-        self.processed_message_ids = set()  # Track processed message IDs
-
-    async def get_live_chat_id(self):
-        """Retrieve the Live Chat ID for the current live stream, retrying every 30s if not found."""
-        while self.running:
-            search_url = f"https://www.googleapis.com/youtube/v3/search?part=id,snippet&channelId={self.channel_id}&eventType=live&type=video&key={self.api_key}"
-
-            async with aiohttp.ClientSession() as session:
-                async with session.get(search_url) as response:
-                    search_response = await response.json()
-
-            if "items" in search_response and search_response["items"]:
-                video_id = None
-                for item in search_response["items"]:
-                    if item["snippet"]["liveBroadcastContent"] == "live":
-                        video_id = item["id"]["videoId"]
-                        break
-
-                if video_id:
-                    chat_url = f"https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id={video_id}&key={self.api_key}"
-
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(chat_url) as response:
-                            chat_response = await response.json()
-
-                    if "items" in chat_response and chat_response["items"]:
-                        self.live_chat_id = chat_response["items"][0]["liveStreamingDetails"]["activeLiveChatId"]
-                        print(f"✅ Live Chat ID Found: {self.live_chat_id}")
-                        return
-                    else:
-                        print("❌ Live stream found, but no active chat detected.")
-                else:
-                    print("❌ No live video found.")
-            else:
-                print("❌ No active YouTube live stream found. Retrying in 30 seconds...")
-
-            await asyncio.sleep(self.retry_interval)  # Async wait before retrying
-
-    async def fetch_chat_messages(self):
-        """Continuously fetch live chat messages from YouTube."""
-        await self.get_live_chat_id()  # Wait until a live chat ID is found
-
-        if not self.live_chat_id:
-            print("❌ No live chat available. Exiting chat fetcher.")
-            return
-
-        url = f"https://www.googleapis.com/youtube/v3/liveChat/messages?liveChatId={self.live_chat_id}&part=snippet,authorDetails&key={self.api_key}"
-
-        while self.running:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as response:
-                    chat_response = await response.json()
-
-            if "items" in chat_response:
-                for item in chat_response["items"]:
-                    message_id = item["id"]  # Unique message ID
-
-                    # Only process new messages
-                    if message_id in self.processed_message_ids:
-                        continue
-                    self.processed_message_ids.add(message_id)  # Mark message as processed
-
-                    author = item["authorDetails"]["displayName"]
-                    message = item["snippet"]["displayMessage"]
-                    msg = f"YouTube | {author}: {message}\n"
-                    self.update_chat_box(msg, "youtube")
+    def on_message(ws, message):
+        try:
+            data = json.loads(message)
             
-            await asyncio.sleep(5)  # Wait before fetching the next batch of messages
+            if data['type'] == 'AUTH_SUCCESS':
+                print("Successfully authenticated with chat server")
+                global chat_reconnect_attempts
+                chat_reconnect_attempts = 0  # Reset reconnect attempts on successful auth
+            elif data['type'] == 'CHAT_MESSAGE':
+                update_chat_box(chat_box, data, data['platform'])
+            elif data['type'] == 'ERROR':
+                print(f"Chat server error: {data['message']}")
+        except Exception as e:
+            print(f"Error processing chat message: {e}")
 
-    def update_chat_box(self, msg, tag):
-        """Insert a message into the chat box with color formatting."""
-        self.chat_box.config(state="normal")
-        self.chat_box.insert("end", msg, tag)
-        self.chat_box.yview("end")  # Auto-scroll
-        self.chat_box.config(state="disabled")
+    def on_error(ws, error):
+        print(f"Chat WebSocket error: {error}")
 
-    def stop(self):
-        """Stop fetching chat messages."""
-        self.running = False
+    def on_close(ws, close_status_code, close_msg):
+        global chat_reconnect_attempts
+        print(f"Chat connection closed: {close_status_code} - {close_msg}")
+        
+        # Implement exponential backoff for reconnection
+        if chat_reconnect_attempts < chat_max_reconnect_attempts:
+            delay = min(chat_reconnect_delay * (2 ** chat_reconnect_attempts), 300000)  # Max 5 minutes
+            chat_reconnect_attempts += 1
+            print(f"Attempting to reconnect in {delay/1000}s (attempt {chat_reconnect_attempts}/{chat_max_reconnect_attempts})...")
+            time.sleep(delay/1000)  # Convert ms to seconds
+            connect_chat()
+        else:
+            print("Maximum reconnection attempts reached. Please restart the application.")
 
-# Function to run YouTube chat in a thread
-def run_youtube_chat(chat_box):
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    def on_open(ws):
+        print("Connected to chat server")
+        # Authenticate with the server
+        ws.send(json.dumps({
+            'type': 'AUTH',
+            'apiKey': chat_api_key
+        }))
 
-    fetcher = YouTubeChatFetcher(chat_box)
-    loop.run_until_complete(fetcher.fetch_chat_messages())
+    def connect_chat():
+        global chat_ws
+        try:
+            # Create WebSocket connection
+            chat_ws = websocket.WebSocketApp(
+                CHAT_API_URL,
+                on_message=on_message,
+                on_error=on_error,
+                on_close=on_close,
+                on_open=on_open
+            )
+            chat_ws.run_forever()
+        except Exception as e:
+            print(f"Error creating WebSocket connection: {e}")
+            # Trigger reconnection through on_close
+            on_close(None, 1006, str(e))
+
+    # First, get an API key with retry
+    while True:
+        try:
+            response = requests.post('http://localhost:3001/api/keys')
+            data = response.json()
+            chat_api_key = data['apiKey']
+            print("Obtained chat API key")
+            
+            # Start WebSocket connection
+            connect_chat()
+            break
+        except Exception as e:
+            print(f"Failed to get chat API key: {e}")
+            time.sleep(5)  # Wait before retrying to get API key
 
 def select_scene(scene, window):
     global target_scene
@@ -268,12 +221,6 @@ def show_scene_selection(scenes, overlay):
         grid_frame.rowconfigure(i, weight=1)
 
 # Function to update overlay visibility based on OBS scenes
-def update_overlay_visibility(overlay, canvas, scene_name):
-    if scene_name == target_scene:
-        overlay.deiconify()  # Show overlay if selected scene is active
-    else:
-        overlay.withdraw()  # Hide overlay otherwise
-
 def update_overlay_visibility(overlay, canvas, scene_name):
     if scene_name == target_scene:
         overlay.deiconify()  # Show overlay if selected scene is active
@@ -375,14 +322,14 @@ def switch_scene():
         print(f"⚠️ Failed to switch scene: {e}")
 
 if __name__ == "__main__":
+    # Import requests here to avoid potential import issues
+    import requests
+    
     overlay, canvas = create_overlay()
     chat_overlay, chat_box = create_chat_overlay()
 
-    # Start Twitch Chat in a separate thread
-    threading.Thread(target=run_twitch_chat, args=(chat_box,), daemon=True).start()
-
-     # Start YouTube Chat in a separate thread with retry logic
-    threading.Thread(target=run_youtube_chat, args=(chat_box,), daemon=True).start()
+    # Start Chat Client in a separate thread
+    threading.Thread(target=run_chat_client, args=(chat_box,), daemon=True).start()
 
     # Start OBS WebSocket connection in another thread
     threading.Thread(target=run_websocket, args=(overlay, canvas), daemon=True).start()
