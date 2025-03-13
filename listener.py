@@ -10,21 +10,17 @@ import uuid
 import time
 import keyboard
 
+# Server WebSocket Configuration
+SERVER_WS_URL = "ws://watch.stream150.com:3001"  # WebSocket URL for your server
+
 # OBS WebSocket Configuration
 host = "ws://ip:port"  # Change to the IP and port of the OBS WebSocket server
 password = "WSPasswrd"  # Your OBS WebSocket password
 target_scene = None  # This will store the scene selected from the popup
 chat_locked = False  # Track if the chat box should be locked
-ws_connection = None # Global websocket connection 
+ws_connection = None # Global websocket connection for OBS
+server_ws = None  # Global websocket connection for server
 hotkey_registered = False  # Track if F8 hotkey is registered
-
-# Chat API Configuration
-CHAT_API_URL = "ws://watch.stream150.com/api/chat"  # Your chat API WebSocket URL
-chat_api_key = None  # Will be set after fetching from server
-chat_ws = None  # Global chat WebSocket connection
-chat_reconnect_attempts = 0
-chat_max_reconnect_attempts = 5
-chat_reconnect_delay = 3000  # Base delay in milliseconds
 
 # Minimize console window
 def minimize_console():
@@ -79,103 +75,97 @@ def create_chat_overlay():
                        bg="black", fg="white", font=("Helvetica", 14, "bold"), 
                        bd=0, highlightthickness=0) 
     chat_box.pack(expand=True, fill="both")
-    chat_box.insert("end", "Connecting to chat...\n")
+    chat_box.insert("end", "Connecting to server chat...\n")
     chat_box.config(state="disabled")
 
-    # Define color tags for different platforms
-    chat_box.tag_configure("twitch", foreground="white", background="purple")
-    chat_box.tag_configure("youtube", foreground="white", background="red")
-    chat_box.tag_configure("web", foreground="white", background="blue")
+    # Define color tags
+    chat_box.tag_configure("twitch", foreground="white", background="purple")  # Twitch messages highlighted
+    chat_box.tag_configure("youtube", foreground="white", background="red")  # YouTube messages highlighted
+    chat_box.tag_configure("web", foreground="white", background="blue")  # Web messages highlighted
 
     return chat_overlay, chat_box
+
 
 def lock_chat_position():
     global chat_locked
     chat_locked = True
 
-def update_chat_box(chat_box, message, platform):
-    """Insert a message into the chat box with color formatting."""
-    chat_box.config(state="normal")
-    msg = f"{platform} | {message['username']}: {message['message']}\n"
-    chat_box.insert("end", msg, platform.lower())
-    chat_box.yview("end")  # Auto-scroll
-    chat_box.config(state="disabled")
-
-# Chat API WebSocket Handler
-def run_chat_client(chat_box):
-    global chat_api_key, chat_ws, chat_reconnect_attempts
-
+# Function to run the server WebSocket connection
+def run_server_websocket(chat_box):
+    global server_ws
+    
     def on_message(ws, message):
         try:
             data = json.loads(message)
             
-            if data['type'] == 'AUTH_SUCCESS':
-                print("Successfully authenticated with chat server")
-                global chat_reconnect_attempts
-                chat_reconnect_attempts = 0  # Reset reconnect attempts on successful auth
-            elif data['type'] == 'CHAT_MESSAGE':
-                update_chat_box(chat_box, data, data['platform'])
-            elif data['type'] == 'ERROR':
-                print(f"Chat server error: {data['message']}")
-        except Exception as e:
-            print(f"Error processing chat message: {e}")
-
-    def on_error(ws, error):
-        print(f"Chat WebSocket error: {error}")
-
-    def on_close(ws, close_status_code, close_msg):
-        global chat_reconnect_attempts
-        print(f"Chat connection closed: {close_status_code} - {close_msg}")
-        
-        # Implement exponential backoff for reconnection
-        if chat_reconnect_attempts < chat_max_reconnect_attempts:
-            delay = min(chat_reconnect_delay * (2 ** chat_reconnect_attempts), 300000)  # Max 5 minutes
-            chat_reconnect_attempts += 1
-            print(f"Attempting to reconnect in {delay/1000}s (attempt {chat_reconnect_attempts}/{chat_max_reconnect_attempts})...")
-            time.sleep(delay/1000)  # Convert ms to seconds
-            connect_chat()
-        else:
-            print("Maximum reconnection attempts reached. Please restart the application.")
-
-    def on_open(ws):
-        print("Connected to chat server")
-        # Authenticate with the server
-        ws.send(json.dumps({
-            'type': 'AUTH',
-            'apiKey': chat_api_key
-        }))
-
-    def connect_chat():
-        global chat_ws
-        try:
-            # Create WebSocket connection
-            chat_ws = websocket.WebSocketApp(
-                CHAT_API_URL,
-                on_message=on_message,
-                on_error=on_error,
-                on_close=on_close,
-                on_open=on_open
-            )
-            chat_ws.run_forever()
-        except Exception as e:
-            print(f"Error creating WebSocket connection: {e}")
-            # Trigger reconnection through on_close
-            on_close(None, 1006, str(e))
-
-    # First, get an API key with retry
-    while True:
-        try:
-            response = requests.post('http://localhost:3001/api/keys')
-            data = response.json()
-            chat_api_key = data['apiKey']
-            print("Obtained chat API key")
+            if data.get('type') == 'CHAT_MESSAGE':
+                platform = data.get('platform', 'web')
+                username = data.get('username', 'Anonymous')
+                msg_content = data.get('message', '')
+                
+                # Format message based on platform
+                msg = f"{platform.capitalize()} | {username}: {msg_content}\n"
+                
+                # Update chat box with appropriate tag
+                chat_box.config(state="normal")
+                chat_box.insert("end", msg, platform.lower())
+                chat_box.yview("end")  # Auto-scroll
+                chat_box.config(state="disabled")
             
-            # Start WebSocket connection
-            connect_chat()
-            break
+            elif data.get('type') == 'CHAT_HISTORY':
+                messages = data.get('messages', [])
+                
+                chat_box.config(state="normal")
+                chat_box.delete("1.0", "end")  # Clear existing content
+                
+                for msg_data in messages:
+                    platform = msg_data.get('platform', 'web')
+                    username = msg_data.get('username', 'Anonymous')
+                    msg_content = msg_data.get('message', '')
+                    
+                    # Format message based on platform
+                    msg = f"{platform.capitalize()} | {username}: {msg_content}\n"
+                    
+                    # Insert with appropriate tag
+                    chat_box.insert("end", msg, platform.lower())
+                
+                chat_box.yview("end")  # Auto-scroll
+                chat_box.config(state="disabled")
+        
         except Exception as e:
-            print(f"Failed to get chat API key: {e}")
-            time.sleep(5)  # Wait before retrying to get API key
+            print(f"Error processing message: {e}")
+    
+    def on_error(ws, error):
+        print(f"Server WebSocket Error: {error}")
+    
+    def on_close(ws, close_status_code, close_msg):
+        print(f"Server WebSocket connection closed: {close_status_code}, {close_msg}")
+        # Attempt to reconnect after a delay
+        time.sleep(5)
+        connect_to_server()
+    
+    def on_open(ws):
+        print("Connected to server WebSocket")
+        # Request chat history when connected
+        ws.send(json.dumps({"type": "REQUEST_CHAT_HISTORY"}))
+    
+    def connect_to_server():
+        global server_ws
+        try:
+            ws = websocket.WebSocketApp(SERVER_WS_URL,
+                                        on_message=on_message,
+                                        on_error=on_error,
+                                        on_close=on_close,
+                                        on_open=on_open)
+            server_ws = ws
+            ws.run_forever()
+        except Exception as e:
+            print(f"Failed to connect to server: {e}")
+            time.sleep(5)
+            connect_to_server()
+    
+    # Start connection
+    connect_to_server()
 
 def select_scene(scene, window):
     global target_scene
@@ -322,14 +312,11 @@ def switch_scene():
         print(f"⚠️ Failed to switch scene: {e}")
 
 if __name__ == "__main__":
-    # Import requests here to avoid potential import issues
-    import requests
-    
     overlay, canvas = create_overlay()
     chat_overlay, chat_box = create_chat_overlay()
 
-    # Start Chat Client in a separate thread
-    threading.Thread(target=run_chat_client, args=(chat_box,), daemon=True).start()
+    # Start Server WebSocket connection in a separate thread
+    threading.Thread(target=run_server_websocket, args=(chat_box,), daemon=True).start()
 
     # Start OBS WebSocket connection in another thread
     threading.Thread(target=run_websocket, args=(overlay, canvas), daemon=True).start()
