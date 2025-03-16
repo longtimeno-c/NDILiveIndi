@@ -21,6 +21,7 @@ chat_locked = False  # Track if the chat box should be locked
 ws_connection = None # Global websocket connection for OBS
 server_ws = None  # Global websocket connection for server
 hotkey_registered = False  # Track if F8 hotkey is registered
+f9_registered = False  # Track if F9 hotkey is registered
 
 # Minimize console window
 def minimize_console():
@@ -43,6 +44,10 @@ def create_overlay():
     overlay.attributes("-topmost", True)
     overlay.overrideredirect(True)
     overlay.attributes("-alpha", 0.85)  # Adjust transparency
+    
+    # Make window click-through
+    overlay.attributes('-transparentcolor', 'black')
+    overlay.wm_attributes("-disabled", True)
 
     # Canvas for "LIVE" indicator
     canvas = tk.Canvas(overlay, width=120, height=50, bg='red', bd=0, highlightthickness=0)
@@ -68,12 +73,15 @@ def create_chat_overlay():
     chat_overlay.geometry("+800+200")  # Initial position
     chat_overlay.attributes("-topmost", True)
     
+    # Initially allow interaction
+    chat_overlay.overrideredirect(False)  # Allow window decorations initially
+    
     chat_frame = tk.Frame(chat_overlay, bg="black")
     chat_frame.pack(fill="both", expand=True, padx=0, pady=0)  # Remove padding
 
     chat_box = tk.Text(chat_frame, wrap="word", height=15, width=45, 
                        bg="black", fg="white", font=("Helvetica", 14, "bold"), 
-                       bd=0, highlightthickness=0) 
+                       bd=0, highlightthickness=0)
     chat_box.pack(expand=True, fill="both")
     chat_box.insert("end", "Connecting to server chat...\n")
     chat_box.config(state="disabled")
@@ -168,12 +176,15 @@ def run_server_websocket(chat_box):
     connect_to_server()
 
 def select_scene(scene, window):
-    global target_scene
+    global target_scene, chat_overlay
     target_scene = scene
-    lock_chat_position()
-    chat_overlay.overrideredirect(True)  # Lock chat box in overlay mode
+    
+    # Now lock the chat overlay and make it click-through
+    chat_overlay.overrideredirect(True)  # Remove window decorations
+    chat_overlay.attributes("-transparentcolor", "black")  # Make black background click-through
+    chat_overlay.wm_attributes("-disabled", True)  # Disable interaction
     chat_overlay.lower(overlay)
-    chat_overlay.attributes("-transparentcolor", "black")
+    
     window.destroy()
 
 # Function to show the scene selection popup
@@ -217,12 +228,36 @@ def update_overlay_visibility(overlay, canvas, scene_name):
     else:
         overlay.withdraw()  # Hide overlay otherwise
 
+# Function to save the OBS replay buffer
+def save_replay():
+    """Save the OBS replay buffer using the WebSocket connection."""
+    global ws_connection
+
+    if not ws_connection:
+        print("⚠️ WebSocket not connected. Replay save failed.")
+        return
+
+    # Send request to save replay buffer
+    save_replay_payload = {
+        "op": 6,
+        "d": {
+            "requestId": str(uuid.uuid4()),
+            "requestType": "SaveReplayBuffer",
+        }
+    }
+
+    try:
+        ws_connection.send(json.dumps(save_replay_payload))
+        print("🎥 Saving replay buffer...")
+    except Exception as e:
+        print(f"⚠️ Failed to save replay: {e}")
+
 # Function to run the OBS WebSocket connection with reconnect logic
 def run_websocket(overlay, canvas):
-    global ws_connection, hotkey_registered
+    global ws_connection, hotkey_registered, f9_registered
 
     def on_message(ws, message):
-        global ws_connection, hotkey_registered
+        global ws_connection, hotkey_registered, f9_registered
         data = json.loads(message)
         if data['op'] == 0:  # Hello message with auth challenge
             secret = data['d']['authentication']['challenge']
@@ -236,11 +271,16 @@ def run_websocket(overlay, canvas):
         elif data['op'] == 2:  # Auth success
             ws_connection = ws
 
-            # Bind the F8 hotkey only if it's not already registered
+            # Bind the hotkeys only if they're not already registered
             if not hotkey_registered:
                 keyboard.add_hotkey("F8", switch_scene)
                 hotkey_registered = True
                 print("🎯 F8 hotkey bound to switch scenes.")
+            
+            if not f9_registered:
+                keyboard.add_hotkey("F9", save_replay)
+                f9_registered = True
+                print("🎥 F9 hotkey bound to save replay buffer.")
 
             scene_request_payload = {
                 'op': 6,
