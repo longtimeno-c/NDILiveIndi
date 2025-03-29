@@ -17,8 +17,8 @@ import win32api
 SERVER_WS_URL = "ws://watch.stream150.com:3001"  # WebSocket URL for your server
 
 # OBS WebSocket Configuration
-host = "ws://ip:port"  # Change to the IP and port of the OBS WebSocket server
-password = "WSPassword"  # Your OBS WebSocket password
+host = "ws://OBSip:port"  # Change to the IP and port of the OBS WebSocket server
+password = "OBSPassword"  # Your OBS WebSocket password
 target_scene = None  # This will store the scene selected from the popup
 chat_locked = False  # Track if the chat box should be locked
 ws_connection = None # Global websocket connection for OBS
@@ -202,6 +202,15 @@ def run_server_websocket(chat_box):
 def select_scene(scene, window):
     global target_scene, chat_overlay, chat_box, chat_frame
     target_scene = scene
+    print(f"🎯 Target scene selected: {target_scene}")
+    
+    # Request current scene to immediately check visibility
+    if ws_connection:
+        current_scene_payload = {
+            'op': 6,
+            'd': {'requestType': 'GetCurrentProgramScene', 'requestId': str(uuid.uuid4())}
+        }
+        ws_connection.send(json.dumps(current_scene_payload))
     
     # Now lock the chat overlay and make it click-through
     chat_overlay.overrideredirect(True)  # Remove window decorations
@@ -257,9 +266,13 @@ def show_scene_selection(scenes, overlay):
 
 # Function to update overlay visibility based on OBS scenes
 def update_overlay_visibility(overlay, canvas, scene_name):
+    global target_scene
+    print(f"Scene changed to: {scene_name}, Target scene: {target_scene}")
     if scene_name == target_scene:
+        print("📍 SHOWING live indicator")
         overlay.deiconify()  # Show overlay if selected scene is active
     else:
+        print("📍 HIDING live indicator")
         overlay.withdraw()  # Hide overlay otherwise
 
 # Function to save the OBS replay buffer
@@ -292,41 +305,65 @@ def run_websocket(overlay, canvas):
 
     def on_message(ws, message):
         global ws_connection, hotkey_registered, f9_registered
-        data = json.loads(message)
-        if data['op'] == 0:  # Hello message with auth challenge
-            secret = data['d']['authentication']['challenge']
-            salt = data['d']['authentication']['salt']
-            auth_response = get_auth_response(password, secret, salt)
-            auth_payload = {
-                'op': 1,
-                'd': {'rpcVersion': 1, 'authentication': auth_response, 'eventSubscriptions': 5}
-            }
-            ws.send(json.dumps(auth_payload))
-        elif data['op'] == 2:  # Auth success
-            ws_connection = ws
+        try:
+            data = json.loads(message)
+            if data['op'] == 0:  # Hello message with auth challenge
+                secret = data['d']['authentication']['challenge']
+                salt = data['d']['authentication']['salt']
+                auth_response = get_auth_response(password, secret, salt)
+                auth_payload = {
+                    'op': 1,
+                    'd': {'rpcVersion': 1, 'authentication': auth_response, 'eventSubscriptions': 31}  # Increased subscription value
+                }
+                ws.send(json.dumps(auth_payload))
+                print("🔑 Authentication sent to OBS")
+            elif data['op'] == 2:  # Auth success
+                ws_connection = ws
+                print("✅ Successfully authenticated with OBS")
 
-            # Bind the hotkeys only if they're not already registered
-            if not hotkey_registered:
-                keyboard.add_hotkey("F8", switch_scene)
-                hotkey_registered = True
-                print("🎯 F8 hotkey bound to switch scenes.")
-            
-            if not f9_registered:
-                keyboard.add_hotkey("F9", save_replay)
-                f9_registered = True
-                print("🎥 F9 hotkey bound to save replay buffer.")
+                # Bind the hotkeys only if they're not already registered
+                if not hotkey_registered:
+                    keyboard.add_hotkey("F8", switch_scene)
+                    hotkey_registered = True
+                    print("🎯 F8 hotkey bound to switch scenes.")
+                
+                if not f9_registered:
+                    keyboard.add_hotkey("F9", save_replay)
+                    f9_registered = True
+                    print("🎥 F9 hotkey bound to save replay buffer.")
 
-            scene_request_payload = {
-                'op': 6,
-                'd': {'resource': 'ScenesService', 'requestType': 'GetSceneList', 'requestId': str(uuid.uuid4())}
-            }
-            ws.send(json.dumps(scene_request_payload))
-        elif data['op'] == 7 and data['d']['requestType'] == 'GetSceneList':
-            scenes = [scene['sceneName'] for scene in data['d']['responseData']['scenes']]
-            overlay.after(0, lambda: show_scene_selection(scenes, overlay))
-        elif data['op'] == 5 and data['d']['eventType'] == 'CurrentProgramSceneChanged':
-            current_scene = data['d']['eventData']['sceneName']
-            update_overlay_visibility(overlay, canvas, current_scene)
+                # Request current scene and scene list
+                current_scene_payload = {
+                    'op': 6,
+                    'd': {'requestType': 'GetCurrentProgramScene', 'requestId': str(uuid.uuid4())}
+                }
+                ws.send(json.dumps(current_scene_payload))
+                
+                scene_request_payload = {
+                    'op': 6,
+                    'd': {'requestType': 'GetSceneList', 'requestId': str(uuid.uuid4())}
+                }
+                ws.send(json.dumps(scene_request_payload))
+                print("📋 Requested scene list from OBS")
+            elif data['op'] == 7 and data['d']['requestType'] == 'GetSceneList':
+                scenes = [scene['sceneName'] for scene in data['d']['responseData']['scenes']]
+                print(f"📋 Received scene list: {scenes}")
+                overlay.after(0, lambda: show_scene_selection(scenes, overlay))
+            elif data['op'] == 7 and data['d']['requestType'] == 'GetCurrentProgramScene':
+                current_scene = data['d']['responseData']['sceneName']
+                print(f"📺 Current program scene: {current_scene}")
+                overlay.after(0, lambda: update_overlay_visibility(overlay, canvas, current_scene))
+            elif data['op'] == 5:  # Event
+                if data['d']['eventType'] == 'CurrentProgramSceneChanged':
+                    current_scene = data['d']['eventData']['sceneName']
+                    print(f"🔄 Scene changed to: {current_scene}")
+                    overlay.after(0, lambda: update_overlay_visibility(overlay, canvas, current_scene))
+                # Log any other events for debugging
+                else:
+                    print(f"📝 Received event: {data['d']['eventType']}")
+        except Exception as e:
+            print(f"⚠️ Error processing message: {e}")
+            print(f"⚠️ Message content: {message[:200]}...")  # Print first 200 chars of message
 
     def on_error(ws, error):
         print(f"WebSocket Error: {error}")
