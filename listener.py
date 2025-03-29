@@ -9,13 +9,16 @@ import hashlib
 import uuid
 import time
 import keyboard
+import win32gui
+import win32con
+import win32api
 
 # Server WebSocket Configuration
 SERVER_WS_URL = "ws://watch.stream150.com:3001"  # WebSocket URL for your server
 
 # OBS WebSocket Configuration
 host = "ws://ip:port"  # Change to the IP and port of the OBS WebSocket server
-password = "WSPasswrd"  # Your OBS WebSocket password
+password = "WSPassword"  # Your OBS WebSocket password
 target_scene = None  # This will store the scene selected from the popup
 chat_locked = False  # Track if the chat box should be locked
 ws_connection = None # Global websocket connection for OBS
@@ -37,6 +40,17 @@ def get_auth_response(password, secret, salt):
     auth_response = base64.b64encode(hashlib.sha256((passhash + secret).encode('utf-8')).digest()).decode('utf-8')
     return auth_response
 
+def make_window_clickthrough(hwnd):
+    """Make a window transparent to mouse clicks and improve visual transparency."""
+    # Add layered and transparent styles
+    ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+    win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE,
+                          ex_style | win32con.WS_EX_LAYERED | win32con.WS_EX_TRANSPARENT)
+    
+    # Set transparency level (0-255, where 255 is fully opaque)
+    # Using 200 for text visibility while keeping it somewhat transparent
+    win32gui.SetLayeredWindowAttributes(hwnd, win32api.RGB(0, 0, 0), 200, win32con.LWA_ALPHA | win32con.LWA_COLORKEY)
+
 def create_overlay():
     overlay = tk.Tk()
     overlay.title("Live Indicator")
@@ -48,6 +62,11 @@ def create_overlay():
     # Make window click-through
     overlay.attributes('-transparentcolor', 'black')
     overlay.wm_attributes("-disabled", True)
+    
+    # Get HWND of the overlay - using the correct method
+    overlay.update_idletasks()  # Make sure window exists
+    hwnd = overlay.winfo_id()
+    make_window_clickthrough(hwnd)
 
     # Canvas for "LIVE" indicator
     canvas = tk.Canvas(overlay, width=120, height=50, bg='red', bd=0, highlightthickness=0)
@@ -68,6 +87,8 @@ def create_overlay():
     return overlay, canvas
 
 def create_chat_overlay():
+    global chat_frame  # Make chat_frame accessible globally
+    
     chat_overlay = tk.Toplevel()
     chat_overlay.title("Chat Overlay")
     chat_overlay.geometry("+800+200")  # Initial position
@@ -75,6 +96,9 @@ def create_chat_overlay():
     
     # Initially allow interaction
     chat_overlay.overrideredirect(False)  # Allow window decorations initially
+    
+    # Configure for transparency
+    chat_overlay.config(bg="black")
     
     chat_frame = tk.Frame(chat_overlay, bg="black")
     chat_frame.pack(fill="both", expand=True, padx=0, pady=0)  # Remove padding
@@ -86,10 +110,10 @@ def create_chat_overlay():
     chat_box.insert("end", "Connecting to server chat...\n")
     chat_box.config(state="disabled")
 
-    # Define color tags
-    chat_box.tag_configure("twitch", foreground="white", background="purple")  # Twitch messages highlighted
-    chat_box.tag_configure("youtube", foreground="white", background="red")  # YouTube messages highlighted
-    chat_box.tag_configure("web", foreground="white", background="blue")  # Web messages highlighted
+    # Define color tags with enhanced colors for better visibility
+    chat_box.tag_configure("twitch", foreground="#ffffff", background=None)  # White text
+    chat_box.tag_configure("youtube", foreground="#ffaaaa", background=None)  # Brighter red text
+    chat_box.tag_configure("web", foreground="#aaddff", background=None)  # Brighter blue text
 
     return chat_overlay, chat_box
 
@@ -176,13 +200,23 @@ def run_server_websocket(chat_box):
     connect_to_server()
 
 def select_scene(scene, window):
-    global target_scene, chat_overlay
+    global target_scene, chat_overlay, chat_box, chat_frame
     target_scene = scene
     
     # Now lock the chat overlay and make it click-through
     chat_overlay.overrideredirect(True)  # Remove window decorations
-    chat_overlay.attributes("-transparentcolor", "black")  # Make black background click-through
-    chat_overlay.wm_attributes("-disabled", True)  # Disable interaction
+    
+    # Make window fully transparent in tkinter first
+    chat_overlay.attributes("-transparentcolor", "black")
+    
+    # Disable interaction
+    chat_overlay.wm_attributes("-disabled", True)
+    
+    # Ensure click-through works by applying it after window is configured
+    chat_overlay.update_idletasks()
+    hwnd = chat_overlay.winfo_id()
+    make_window_clickthrough(hwnd)
+    
     chat_overlay.lower(overlay)
     
     window.destroy()
