@@ -111,7 +111,7 @@ def create_chat_overlay():
     chat_box.config(state="disabled")
 
     # Define color tags with enhanced colors for better visibility
-    chat_box.tag_configure("twitch", foreground="#ffffff", background=None)  # White text
+    chat_box.tag_configure("twitch", foreground="#9146FF", background=None)  # Twitch purple
     chat_box.tag_configure("youtube", foreground="#ffaaaa", background=None)  # Brighter red text
     chat_box.tag_configure("web", foreground="#aaddff", background=None)  # Brighter blue text
 
